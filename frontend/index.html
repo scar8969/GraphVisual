@@ -54,6 +54,13 @@
   <span class="spacer"></span>
   <input type="text" id="search" placeholder="Search entities… (e.g. Musk)" />
   <select id="typeFilter"><option value="">All types</option><option value="PERSON">People</option><option value="ORG">Organizations</option><option value="GPE">Places</option><option value="OTHER">Other</option></select>
+  <select id="relFilter"><option value="">All relations</option></select>
+  <label style="font-size:12px;color:var(--dim)">Conf ≥ <span id="confVal">0.0</span>
+    <input type="range" id="confSlider" min="0" max="0.9" step="0.05" value="0" style="width:80px;vertical-align:middle" />
+  </label>
+  <label style="font-size:12px;color:var(--dim)">Year <span id="yearVal">All</span>
+    <input type="range" id="yearSlider" min="0" max="0" value="0" style="width:80px;vertical-align:middle" />
+  </label>
   <button class="btn" id="btnExport">Export JSON</button>
   <button class="btn" id="btnRebuild">Rebuild</button>
 </header>
@@ -107,7 +114,22 @@ function loadGraph(data) {
   edges = data.edges;
   stats = data.stats;
   renderStats();
-  // center
+  // populate relation filter
+  const relSel = document.getElementById('relFilter');
+  const rels = [...new Set(edges.map(e => e.relation))].sort();
+  relSel.innerHTML = '<option value="">All relations</option>' + rels.map(r => `<option value="${r}">${r}</option>`).join('');
+  // populate year slider from edge sentences (extract 19xx/20xx)
+  const years = new Set();
+  for (const e of edges) {
+    const m = (e.sentence||'').match(/\b(19\d{2}|20\d{2})\b/);
+    if (m) years.add(+m[1]);
+  }
+  const yArr = [...years].sort((a,b)=>a-b);
+  const ys = document.getElementById('yearSlider');
+  if (yArr.length > 1) { ys.min = yArr[0]; ys.max = yArr[yArr.length-1]; ys.value = yArr[yArr.length-1]; document.getElementById('yearVal').textContent = 'All'; }
+  else { ys.min = 0; ys.max = 0; ys.value = 0; }
+  // cap large graphs
+  if (nodes.length > 300) { nodes = nodes.slice(0, 300); edges = edges.filter(e => nodes.some(n=>n.id===e.source) && nodes.some(n=>n.id===e.target)); }
   tx = W/2; ty = H/2; scale = Math.min(W, H) / 600;
 }
 
@@ -153,6 +175,20 @@ function step() {
 }
 
 // ── draw ───────────────────────────────────────────────────────────
+function edgeVisible(e) {
+  const conf = +document.getElementById('confSlider').value;
+  const rel = document.getElementById('relFilter').value;
+  const ys = document.getElementById('yearSlider');
+  const year = +ys.value;
+  if (e.confidence < conf) return false;
+  if (rel && e.relation !== rel) return false;
+  if (year > 0) {
+    const m = (e.sentence||'').match(/\b(19\d{2}|20\d{2})\b/);
+    if (!m || +m[1] > year) return false;
+  }
+  return true;
+}
+
 function draw() {
   ctx.clearRect(0, 0, W, H);
   ctx.save();
@@ -162,6 +198,7 @@ function draw() {
 
   // edges
   for (const e of edges) {
+    if (!edgeVisible(e)) continue;
     const a = nodes.find(n=>n.id===e.source), b = nodes.find(n=>n.id===e.target);
     if (!a || !b) continue;
     const active = !selSet || (selSet.has(e.source) && selSet.has(e.target));
@@ -258,7 +295,8 @@ function selectNode(id) {
     const other = c.source===id ? c.target : c.source;
     const on = nodes.find(x=>x.id===other);
     const dir = c.source===id ? '→' : '←';
-    html += `<div class="row">${on?on.label:other} ${dir} <span style="color:var(--accent)">${c.relation}</span></div>`;
+    html += `<div class="row">${on?on.label:other} ${dir} <span style="color:var(--accent)">${c.relation}</span> <span style="color:#666">(p${c.page||'?'})</span></div>`;
+    if (c.sentence) html += `<div style="font-size:11px;color:#666;margin:2px 0 6px 12px;border-left:2px solid var(--border);padding-left:6px">"${c.sentence}"</div>`;
   }
   document.getElementById('pBody').innerHTML = html;
 }
@@ -275,6 +313,16 @@ document.getElementById('typeFilter').addEventListener('change', e => {
   const t = e.target.value;
   if (!t) { nodes.forEach(n=>n.hidden=false); return; }
   nodes.forEach(n => n.hidden = n.type !== t);
+});
+document.getElementById('relFilter').addEventListener('change', () => selected = null);
+document.getElementById('confSlider').addEventListener('input', e => {
+  document.getElementById('confVal').textContent = (+e.target.value).toFixed(2);
+  selected = null;
+});
+document.getElementById('yearSlider').addEventListener('input', e => {
+  const v = +e.target.value;
+  document.getElementById('yearVal').textContent = v > 0 ? v : 'All';
+  selected = null;
 });
 
 // ── actions ────────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ _ACRONYM_RE = re.compile(r"\b[A-Z]{2,6}\b")
 _SINGLE_CAP_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
 # camelCase orgs like SpaceX, PayPal, OpenSea, DeepMind, Canva, Reddit
 _CAMEL_ORG_RE = re.compile(r"\b[A-Z][a-z]+[A-Z][a-zA-Z]*\b")
+_WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z\-']+")
 
 
 @dataclass
@@ -77,7 +78,7 @@ class EntityExtractor:
 
     @property
     def backend(self) -> str:
-        return "spacy" if self._nlp else "heuristic"
+        return "spacy" if self._nlp is not None else "heuristic"
 
     def extract(self, text: str) -> List[Tuple[str, str]]:
         """Return [(mention, type)] raw mentions."""
@@ -87,6 +88,7 @@ class EntityExtractor:
 
     # ── spaCy path ────────────────────────────────────────────────────
     def _extract_spacy(self, text: str) -> List[Tuple[str, str]]:
+        assert self._nlp is not None
         doc = self._nlp(text[:500_000])
         out = []
         for ent in doc.ents:
@@ -180,9 +182,13 @@ class EntityExtractor:
 class EntityResolver:
     """Merge mentions into canonical entities via alias rules."""
 
-    def __init__(self):
+    def __init__(self, disambiguate: bool = True):
         self._canonical: Dict[str, str] = {}   # alias → canonical id
         self._entities: Dict[str, Entity] = {}  # canonical id → Entity
+        self._disambiguate = disambiguate
+        # context signature per canonical id: set of nearby content words
+        self._contexts: Dict[str, set] = {}
+        self._context_window = 6  # words around the mention
 
     # ── normalization ─────────────────────────────────────────────────
     @staticmethod
@@ -204,8 +210,13 @@ class EntityResolver:
         return "".join(p[0] for p in parts if p and p[0].isalpha() and p.lower() not in skip).upper()
 
     # ── resolution ────────────────────────────────────────────────────
-    def add_mention(self, mention: str, etype: str, source: str, page: int, confidence: float = 0.5):
-        """Register a raw mention, resolving it to a canonical entity."""
+    def add_mention(self, mention: str, etype: str, source: str, page: int, confidence: float = 0.5,
+                    context: str = ""):
+        """Register a raw mention, resolving it to a canonical entity.
+
+        `context` is the surrounding sentence — used to disambiguate same-name
+        entities (two "Apple"s with different contexts become different nodes).
+        """
         mention = mention.strip()
         if not mention:
             return None
@@ -214,7 +225,7 @@ class EntityResolver:
         if not key:
             return None
 
-        canonical = self._resolve(mention, key, etype)
+        canonical = self._resolve(mention, key, etype, context)
         ent = self._entities.setdefault(
             canonical,
             Entity(id=canonical, text=mention, type=etype),
@@ -228,9 +239,30 @@ class EntityResolver:
             ent.pages.append(page)
         ent.mentions += 1
         ent.confidence = max(ent.confidence, confidence)
+        # merge context signature
+        if self._disambiguate and context:
+            sig = self._context_words(context, mention)
+            self._contexts.setdefault(canonical, set()).update(sig)
         return ent
 
-    def _resolve(self, mention: str, key: str, etype: str) -> str:
+    def _context_words(self, context: str, mention: str) -> set:
+        """Extract content words around the mention (excluding the mention itself)."""
+        words = _WORD_RE.findall(context.lower())
+        try:
+            idx = words.index(mention.lower().split()[0])
+        except ValueError:
+            return set()
+        lo = max(0, idx - self._context_window)
+        hi = min(len(words), idx + 1 + self._context_window)
+        stop = {"the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "by",
+                "for", "with", "from", "to", "as", "is", "was", "were", "be", "been",
+                "he", "she", "it", "they", "we", "you", "i", "his", "her", "their",
+                "our", "my", "this", "that", "these", "those", "also", "then", "there",
+                "here", "not", "no", "yes", "had", "has", "have", "are", "will", "would",
+                "could", "should", "may", "might", "must", "said", "says", "say"}
+        return {w for w in words[lo:hi] if w not in stop and len(w) > 2}
+
+    def _resolve(self, mention: str, key: str, etype: str, context: str = "") -> str:
         """Find the canonical id for a mention, creating one if needed."""
         if key in self._canonical:
             return self._canonical[key]
@@ -246,6 +278,11 @@ class EntityResolver:
             if len(surname) >= 4:
                 for alias, canon in self._canonical.items():
                     if self._surname(alias) == surname and self._entities[canon].type == "PERSON":
+                        # disambiguation: if contexts are very different, don't merge
+                        if self._disambiguate and self._contexts.get(canon) and context:
+                            overlap = len(self._contexts[canon] & self._context_words(context, mention))
+                            if overlap == 0 and self._contexts[canon]:
+                                continue
                         self._canonical[key] = canon
                         return canon
 

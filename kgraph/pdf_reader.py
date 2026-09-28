@@ -58,7 +58,7 @@ class PDFReader:
         try:
             import pdfplumber
         except ImportError:
-            pdfplumber = None
+            pdfplumber = None  # type: ignore[assignment]
 
         pages: List[PageText] = []
         try:
@@ -74,11 +74,61 @@ class PDFReader:
             logger.error("failed to read %s: %s", pdf_path.name, exc)
             return None
 
+        # scanned PDF → OCR fallback
+        if not pages:
+            pages = self._ocr_pdf(pdf_path)
+
         if not pages:
             logger.warning("no extractable text in %s (scanned PDF?)", pdf_path.name)
             return None
 
         return Document(filename=pdf_path.name, path=str(pdf_path), pages=pages)
+
+    def _ocr_pdf(self, pdf_path: Path) -> List[PageText]:
+        """OCR a scanned PDF with pytesseract (renders pages via pdfplumber/pypdf)."""
+        try:
+            import pytesseract
+        except ImportError:
+            logger.warning("pytesseract not installed — cannot OCR %s", pdf_path.name)
+            return []
+        try:
+            import pdfplumber
+        except ImportError:
+            pdfplumber = None  # type: ignore[assignment]
+
+        pages: List[PageText] = []
+        try:
+            if pdfplumber is not None:
+                with pdfplumber.open(str(pdf_path)) as pdf:
+                    for i, page in enumerate(pdf.pages, start=1):
+                        img = page.to_image(resolution=200)
+                        text = pytesseract.image_to_string(img.original).strip()
+                        if text:
+                            pages.append(PageText(page=i, text=text))
+            else:
+                pages = self._ocr_pypdf(pdf_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("OCR failed for %s: %s", pdf_path.name, exc)
+        return pages
+
+    def _ocr_pypdf(self, pdf_path: Path) -> List[PageText]:
+        import pytesseract
+        from pypdf import PdfReader as PyPdfReader
+
+        reader = PyPdfReader(str(pdf_path))
+        pages = []
+        for i, page in enumerate(reader.pages, start=1):
+            try:
+                # pypdf has no direct render; use pdf2image if available
+                from pdf2image import convert_from_path
+                images = convert_from_path(str(pdf_path), first_page=i, last_page=i)
+                if images:
+                    text = pytesseract.image_to_string(images[0]).strip()
+                    if text:
+                        pages.append(PageText(page=i, text=text))
+            except Exception:  # noqa: BLE001
+                break
+        return pages
 
     def _fallback_pypdf(self, pdf_path: Path) -> List[PageText]:
         from pypdf import PdfReader as PyPdfReader

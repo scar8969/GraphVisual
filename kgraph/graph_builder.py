@@ -28,7 +28,7 @@ class KnowledgeGraphBuilder:
     def ner_backend(self) -> str:
         return self.extractor.backend
 
-    def build_from_documents(self, documents: List[Document]) -> nx.DiGraph:
+    def build_from_documents(self, documents: List[Document], cache: dict | None = None) -> nx.DiGraph:
         self.graph.clear()
         self.resolver = EntityResolver()
         self.relations = RelationExtractor(self.resolver)
@@ -44,9 +44,10 @@ class KnowledgeGraphBuilder:
         return self.graph
 
     def _process_page(self, doc: Document, page_num: int, text: str):
-        # entities
-        for mention, etype in self.extractor.extract(text):
-            self.resolver.add_mention(mention, etype, doc.filename, page_num)
+        # entities (with sentence context for disambiguation)
+        for sentence in text.split("\n"):
+            for mention, etype in self.extractor.extract(sentence):
+                self.resolver.add_mention(mention, etype, doc.filename, page_num, context=sentence)
 
         # relations (resolved)
         for rel in self.relations.extract(text, filename=doc.filename, page=page_num):
@@ -152,6 +153,37 @@ class KnowledgeGraphBuilder:
             "avg_degree": round(sum(dict(self.graph.degree()).values()) / max(1, self.graph.number_of_nodes()), 2),
         }
 
+    def analytics(self) -> Dict:
+        """Centrality + community detection for the explorer."""
+        g = self.graph
+        if g.number_of_nodes() == 0:
+            return {"centrality": {}, "communities": [], "top": []}
+        try:
+            deg = nx.degree_centrality(g)
+            bet = nx.betweenness_centrality(g)
+            close = nx.closeness_centrality(g)
+        except Exception:  # noqa: BLE001
+            deg = bet = close = {}
+        # community detection (greedy modularity on undirected version)
+        try:
+            communities = list(nx.community.greedy_modularity_communities(g.to_undirected()))
+        except Exception:  # noqa: BLE001
+            communities = []
+        top = sorted(
+            [{"id": n, "label": g.nodes[n].get("label", n), "type": g.nodes[n].get("type", "OTHER"),
+              "degree": round(deg.get(n, 0), 3), "betweenness": round(bet.get(n, 0), 4),
+              "closeness": round(close.get(n, 0), 3)}
+             for n in g.nodes],
+            key=lambda x: -x["degree"],
+        )[:10]
+        return {
+            "centrality": {n: {"degree": round(deg.get(n, 0), 3),
+                               "betweenness": round(bet.get(n, 0), 4),
+                               "closeness": round(close.get(n, 0), 3)} for n in g.nodes},
+            "communities": [list(c) for c in communities],
+            "top": top,
+        }
+
     def search(self, query: str, max_depth: int = 2) -> List[Dict]:
         q = query.lower()
         hits = [n for n in self.graph.nodes if q in n.lower() or
@@ -175,7 +207,7 @@ class KnowledgeGraphBuilder:
                 "connections": [
                     {"source": u, "target": v, "relation": d.get("relation"),
                      "confidence": d.get("confidence"), "filename": d.get("filename"),
-                     "page": d.get("page")}
+                     "page": d.get("page"), "sentence": d.get("sentence", "")}
                     for u, v, d in sub.edges(data=True)
                 ],
             })

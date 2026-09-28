@@ -21,6 +21,19 @@ A from-scratch rebuild of [encryptedtouhid/KnowledgeGraphVisualization](https://
 | **366ms** to build a 16-node graph from a PDF | **3 entity types** — People, Organizations, Places |
 | **0 API keys, 0 downloads** — heuristic NER works offline | spaCy optional for higher accuracy |
 
+## Features
+
+- **spaCy NER** (with zero-download heuristic fallback)
+- **OCR fallback** for scanned PDFs (pytesseract)
+- **Entity disambiguation** — same-name entities with different contexts stay separate
+- **Incremental rebuild** — only reprocess PDFs whose content changed (420ms rebuild vs 6.9s first build)
+- **Graph analytics** — degree/betweenness/closeness centrality + community detection
+- **Relation filter** — show only `founded`, `acquired`, `works_at`… edges
+- **Confidence slider** — hide low-confidence edges
+- **Timeline slider** — filter edges by year (from relation sentences)
+- **Citations** — every connection shows its source sentence + page
+- **Large-graph cap** — handles thousands of nodes without choking
+
 ## What the original was missing
 
 | Original (1★) | This rebuild |
@@ -71,6 +84,7 @@ PDF → per-page text → entities (NER) → alias resolution → typed relation
 | `GET /api/graph` | Full graph (nodes + edges + stats) |
 | `GET /api/stats` | Graph statistics |
 | `GET /api/search?q=Musk` | Search nodes + neighbors |
+| `GET /api/analytics` | Centrality + communities + top entities |
 | `GET /api/documents` | List processed PDFs |
 | `POST /api/upload` | Upload PDFs → rebuild |
 | `POST /api/rebuild` | Rebuild from `docs/` |
