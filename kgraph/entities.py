@@ -272,6 +272,14 @@ class EntityResolver:
             if key == alias:
                 return canon
 
+        # fuzzy match: near-duplicate aliases ("Elon Reeve Musk" ≈ "Elon Musk")
+        if len(key) >= 6:
+            for alias, canon in self._canonical.items():
+                ent = self._entities.get(canon)
+                if ent and ent.type == etype and self._similar(key, alias) >= 0.85:
+                    self._canonical[key] = canon
+                    return canon
+
         # surname match: "Musk" → "Elon Musk" (same type)
         if etype == "PERSON":
             surname = self._surname(mention)
@@ -297,6 +305,28 @@ class EntityResolver:
         # new canonical
         self._canonical[key] = key
         return key
+
+    @staticmethod
+    def _similar(a: str, b: str) -> float:
+        """Levenshtein similarity in [0, 1]."""
+        if a == b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        # prefix/suffix containment counts as similar ("Elon Reeve Musk" ⊃ "Elon Musk")
+        if a in b or b in a:
+            return 0.9
+        # simple Levenshtein
+        dp = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            prev = dp[0]
+            dp[0] = i
+            for j, cb in enumerate(b, 1):
+                cur = dp[j]
+                dp[j] = min(dp[j] + 1, dp[j - 1] + 1, prev + (ca != cb))
+                prev = cur
+        dist = dp[-1]
+        return 1.0 - dist / max(len(a), len(b))
 
     def entities(self) -> List[Entity]:
         return list(self._entities.values())

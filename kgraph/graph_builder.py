@@ -28,20 +28,81 @@ class KnowledgeGraphBuilder:
     def ner_backend(self) -> str:
         return self.extractor.backend
 
-    def build_from_documents(self, documents: List[Document], cache: dict | None = None) -> nx.DiGraph:
+    def build_from_documents(self, documents: List[Document], cache: dict | None = None,
+                             parallel: bool = False) -> nx.DiGraph:
         self.graph.clear()
         self.resolver = EntityResolver()
         self.relations = RelationExtractor(self.resolver)
 
-        for doc in documents:
-            logger.info("processing %s (%d pages)", doc.filename, doc.page_count)
-            for page in doc.pages:
-                self._process_page(doc, page.page, page.text)
+        if parallel and len(documents) > 1:
+            self._build_parallel(documents)
+        else:
+            for doc in documents:
+                logger.info("processing %s (%d pages)", doc.filename, doc.page_count)
+                for page in doc.pages:
+                    self._process_page(doc, page.page, page.text)
 
         self._finalize()
         logger.info("graph: %d nodes, %d edges (NER=%s)", self.graph.number_of_nodes(),
                     self.graph.number_of_edges(), self.ner_backend)
         return self.graph
+
+    def _build_parallel(self, documents: List[Document]):
+        """Process each PDF in its own subprocess, then merge results."""
+        import multiprocessing as mp
+
+        def _worker(doc_dict: dict) -> dict:
+            """Extract mentions+relations for one doc (runs in subprocess)."""
+            from .entities import EntityExtractor, EntityResolver
+            from .relations import RelationExtractor
+            from .pdf_reader import Document, PageText
+
+            doc = Document(filename=doc_dict["filename"], path=doc_dict["path"],
+                           pages=[PageText(p["page"], p["text"]) for p in doc_dict["pages"]])
+            resolver = EntityResolver()
+            extractor = EntityExtractor()
+            rel_extractor = RelationExtractor(resolver)
+            for page in doc.pages:
+                for sentence in page.text.split("\n"):
+                    for mention, etype in extractor.extract(sentence):
+                        resolver.add_mention(mention, etype, doc.filename, page.page,
+                                             context=sentence)
+                for rel in rel_extractor.extract(page.text, filename=doc.filename, page=page.page):
+                    pass  # relations resolved against this doc's resolver
+            # collect mentions
+            mentions = []
+            for ent in resolver.entities():
+                for alias in ent.aliases:
+                    mentions.append((alias, ent.type, ""))
+            # collect relations (resolve against this doc's resolver)
+            rels = []
+            for page in doc.pages:
+                for rel in rel_extractor.extract(page.text, filename=doc.filename, page=page.page):
+                    rels.append((rel.source, rel.target, rel.relation, rel.verb,
+                                 rel.confidence, rel.page, rel.sentence))
+            return {"mentions": mentions, "relations": rels}
+
+        doc_dicts = [{"filename": d.filename, "path": d.path,
+                      "pages": [{"page": p.page, "text": p.text} for p in d.pages]}
+                     for d in documents]
+        try:
+            with mp.Pool(min(mp.cpu_count(), len(documents))) as pool:
+                results = pool.map(_worker, doc_dicts)
+        except Exception:  # noqa: BLE001
+            # fallback to serial on any multiprocessing issue (e.g. no fork)
+            for doc in documents:
+                for page in doc.pages:
+                    self._process_page(doc, page.page, page.text)
+            return
+
+        for res in results:
+            for m, t, ctx in res["mentions"]:
+                self.resolver.add_mention(m, t, "merged", 1, context=ctx)
+            from .relations import Relation as _Rel
+            for src, tgt, rel, verb, conf, page, sent in res["relations"]:
+                self._add_relation(_Rel(source=src, target=tgt, relation=rel,
+                                        verb=verb, confidence=conf,
+                                        filename="merged", page=page, sentence=sent))
 
     def _process_page(self, doc: Document, page_num: int, text: str):
         # entities (with sentence context for disambiguation)

@@ -69,8 +69,16 @@ class Relation:
 
 
 class RelationExtractor:
-    def __init__(self, resolver):  # noqa: ANN001
+    def __init__(self, resolver, use_spacy: bool = True):  # noqa: ANN001
         self.resolver = resolver
+        self._nlp = None
+        if use_spacy:
+            try:
+                import spacy  # noqa: F401
+                # full pipeline (parser enabled) for dependency relations
+                self._nlp = spacy.load("en_core_web_sm")
+            except Exception:  # noqa: BLE001
+                self._nlp = None
 
     @staticmethod
     def _type_for(verb: str) -> str:
@@ -100,12 +108,77 @@ class RelationExtractor:
 
     def extract(self, text: str, filename: str = "", page: int = 1) -> List[Relation]:
         """Extract typed relations from text. Returns resolved relations."""
+        if self._nlp is not None:
+            rels = self._extract_spacy(text, filename, page)
+            # fall back to heuristics for sentences the parser missed
+            rels += self._extract_heuristic(text, filename, page)
+            return rels
+        return self._extract_heuristic(text, filename, page)
+
+    def _extract_heuristic(self, text: str, filename: str, page: int) -> List[Relation]:
         out: List[Relation] = []
         sentences = _SENT_SPLIT.split(text)
         for sent in sentences[:200]:
             rels = self._extract_sentence(sent, filename, page)
             out.extend(rels)
         return out
+
+    def _extract_spacy(self, text: str, filename: str, page: int) -> List[Relation]:
+        """Dependency-parse relations: nsubj → verb → dobj/attr/prep."""
+        assert self._nlp is not None
+        doc = self._nlp(text[:500_000])
+        out: List[Relation] = []
+        for sent in doc.sents:
+            for token in sent:
+                if token.dep_ not in ("nsubj", "nsubjpass"):
+                    continue
+                verb = token.head
+                # find the object: dobj, attr, or prep→pobj
+                obj = None
+                for child in verb.children:
+                    if child.dep_ in ("dobj", "attr"):
+                        obj = child
+                        break
+                if obj is None:
+                    for child in verb.children:
+                        if child.dep_ == "prep":
+                            for gc in child.children:
+                                if gc.dep_ == "pobj":
+                                    obj = gc
+                                    break
+                            if obj:
+                                break
+                if obj is None:
+                    continue
+                subj_text = self._span_text(token)
+                obj_text = self._span_text(obj)
+                if not subj_text or not obj_text or len(subj_text) < 2 or len(obj_text) < 2:
+                    continue
+                subj_id = self.resolver.canonical_id(subj_text)
+                obj_id = self.resolver.canonical_id(obj_text)
+                if subj_id == obj_id:
+                    continue
+                if subj_id not in self.resolver._entities or obj_id not in self.resolver._entities:
+                    continue
+                rtype = self._type_for(verb.text)
+                if rtype == "related_to":
+                    continue
+                conf = self._confidence(verb.text, self.resolver._entities[subj_id].type,
+                                        self.resolver._entities[obj_id].type)
+                out.append(Relation(source=subj_id, target=obj_id, relation=rtype,
+                                    verb=verb.text.lower(), confidence=conf,
+                                    filename=filename, page=page,
+                                    sentence=sent.text.strip()[:300]))
+        return out
+
+    def _span_text(self, token) -> str:
+        """Full span text for a token (handles multi-word entities)."""
+        parts = [token.text]
+        # include compound nouns ("Tesla Motors", "Bill Gates")
+        for child in token.children:
+            if child.dep_ == "compound" and child.i < token.i:
+                parts.insert(0, child.text)
+        return " ".join(parts)
 
     def _extract_sentence(self, sent: str, filename: str, page: int) -> List[Relation]:
         # find entity mentions in the sentence (raw)

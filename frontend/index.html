@@ -4,6 +4,9 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Knowledge Graph — PDF Explorer</title>
+<script src="https://cdn.jsdelivr.net/npm/sigma@3.0.0-beta.5/build/sigma.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/graphology-layout-force@0.2.4/dist/graphology-layout-force.umd.min.js"></script>
 <style>
   :root {
     --bg: #000000; --panel: #0a0a0a; --panel2: #0f0f0f;
@@ -12,7 +15,7 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
   header .logo { font-size: 18px; font-weight: 700; color: var(--accent); }
   header .sub { font-size: 12px; color: var(--dim); }
   header .spacer { flex: 1; }
@@ -20,31 +23,32 @@
   .btn:hover { border-color: var(--accent); color: var(--accent); }
   .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
   .btn.primary:hover { filter: brightness(1.1); }
-  input[type=text] { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 13px; width: 220px; }
-  input[type=text]:focus { outline: none; border-color: var(--accent); }
-  select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font-size: 13px; }
-  .stats { display: flex; gap: 18px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel2); font-size: 12px; color: var(--dim); }
+  input[type=text], select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+  input[type=text] { width: 180px; }
+  input[type=text]:focus, select:focus { outline: none; border-color: var(--accent); }
+  .stats { display: flex; gap: 18px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel2); font-size: 12px; color: var(--dim); flex-wrap: wrap; }
   .stats b { color: var(--accent); }
   main { flex: 1; position: relative; }
-  #canvas { width: 100%; height: 100%; display: block; cursor: grab; }
-  #canvas.dragging { cursor: grabbing; }
-  /* side panel */
-  #panel { position: absolute; top: 12px; right: 12px; width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px; display: none; max-height: calc(100% - 24px); overflow-y: auto; }
+  #graph-container { width: 100%; height: 100%; }
+  #panel { position: absolute; top: 12px; right: 12px; width: 300px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px; display: none; max-height: calc(100% - 24px); overflow-y: auto; z-index: 10; }
   #panel h3 { color: var(--accent); font-size: 15px; margin-bottom: 8px; }
   #panel .row { font-size: 12px; color: var(--dim); margin-bottom: 4px; }
   #panel .row b { color: var(--text); }
   #panel .tag { display: inline-block; background: var(--panel2); border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font-size: 11px; margin: 2px; color: var(--text); }
   #panel .close { float: right; cursor: pointer; color: var(--dim); font-size: 16px; }
   #panel .close:hover { color: var(--text); }
-  /* legend + upload */
-  #legend { position: absolute; bottom: 12px; left: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; display: flex; gap: 14px; }
+  #panel .cite { font-size: 11px; color: #666; margin: 2px 0 6px 12px; border-left: 2px solid var(--border); padding-left: 6px; }
+  #panel .del { color: #ff3d3d; cursor: pointer; font-size: 11px; margin-left: 6px; }
+  #panel .del:hover { text-decoration: underline; }
+  #legend { position: absolute; bottom: 12px; left: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; display: flex; gap: 14px; z-index: 5; }
   #legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-  #upload { position: absolute; bottom: 12px; right: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+  #upload { position: absolute; bottom: 12px; right: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; display: flex; gap: 8px; align-items: center; z-index: 5; }
   #upload input[type=file] { display: none; }
   #upload label { cursor: pointer; color: var(--accent); }
-  #toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--accent); color: var(--text); padding: 8px 16px; border-radius: 4px; font-size: 13px; display: none; }
-  #hint { position: absolute; top: 12px; left: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 11px; color: var(--dim); }
-  .edge-label { font-size: 10px; fill: var(--dim); pointer-events: none; }
+  #toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--accent); color: var(--text); padding: 8px 16px; border-radius: 4px; font-size: 13px; display: none; z-index: 20; }
+  #hint { position: absolute; top: 12px; left: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 11px; color: var(--dim); z-index: 5; }
+  label.f { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 4px; }
+  label.f input[type=range] { width: 70px; }
 </style>
 </head>
 <body>
@@ -52,22 +56,20 @@
   <span class="logo">⚡ Knowledge Graph</span>
   <span class="sub">PDF → entities → relationships</span>
   <span class="spacer"></span>
-  <input type="text" id="search" placeholder="Search entities… (e.g. Musk)" />
+  <input type="text" id="search" placeholder="Search… (e.g. Musk)" />
+  <select id="docFilter"><option value="">All documents</option></select>
   <select id="typeFilter"><option value="">All types</option><option value="PERSON">People</option><option value="ORG">Organizations</option><option value="GPE">Places</option><option value="OTHER">Other</option></select>
   <select id="relFilter"><option value="">All relations</option></select>
-  <label style="font-size:12px;color:var(--dim)">Conf ≥ <span id="confVal">0.0</span>
-    <input type="range" id="confSlider" min="0" max="0.9" step="0.05" value="0" style="width:80px;vertical-align:middle" />
-  </label>
-  <label style="font-size:12px;color:var(--dim)">Year <span id="yearVal">All</span>
-    <input type="range" id="yearSlider" min="0" max="0" value="0" style="width:80px;vertical-align:middle" />
-  </label>
+  <label class="f">Conf ≥ <span id="confVal">0.0</span><input type="range" id="confSlider" min="0" max="0.9" step="0.05" value="0" /></label>
+  <label class="f">Year <span id="yearVal">All</span><input type="range" id="yearSlider" min="0" max="0" value="0" /></label>
   <button class="btn" id="btnExport">Export JSON</button>
+  <button class="btn" id="btnEvidence">Evidence</button>
   <button class="btn" id="btnRebuild">Rebuild</button>
 </header>
 <div class="stats" id="stats"></div>
 <main>
-  <canvas id="canvas"></canvas>
-  <div id="hint">drag to pan · scroll to zoom · click a node</div>
+  <div id="graph-container"></div>
+  <div id="hint">drag to pan · scroll to zoom · click a node · right-click to delete edge</div>
   <div id="legend">
     <span><span class="dot" style="background:var(--person)"></span>People</span>
     <span><span class="dot" style="background:var(--org)"></span>Organizations</span>
@@ -87,285 +89,177 @@
 </main>
 
 <script>
-// ── force-directed graph on canvas ────────────────────────────────
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-let nodes = [], edges = [], stats = {};
-let W = 0, H = 0;
-let selected = null, hovered = null;
-let dragging = null, offsetX = 0, offsetY = 0;
-let scale = 1, tx = 0, ty = 0;
+const container = document.getElementById('graph-container');
+let graph = null, sigma = null, allNodes = [], allEdges = [], stats = {};
+let selected = null;
 
-function resize() {
-  W = canvas.width = canvas.parentElement.clientWidth;
-  H = canvas.height = canvas.parentElement.clientHeight;
-}
-window.addEventListener('resize', resize); resize();
-
-function typeColor(t) {
-  return {PERSON:'#ff9900', ORG:'#4fc3f7', GPE:'#81c784', PRODUCT:'#f48fb1'}[t] || '#b0bec5';
-}
+function typeColor(t) { return {PERSON:'#ff9900', ORG:'#4fc3f7', GPE:'#81c784', PRODUCT:'#f48fb1'}[t] || '#b0bec5'; }
 
 function loadGraph(data) {
-  nodes = data.nodes.map(n => ({
-    ...n, x: (Math.random()-0.5)*W*0.5, y: (Math.random()-0.5)*H*0.5,
-    vx: 0, vy: 0, r: Math.min(28, 8 + Math.sqrt(n.mentions||1)*4)
-  }));
-  edges = data.edges;
-  stats = data.stats;
+  allNodes = data.nodes; allEdges = data.edges; stats = data.stats;
   renderStats();
-  // populate relation filter
-  const relSel = document.getElementById('relFilter');
-  const rels = [...new Set(edges.map(e => e.relation))].sort();
-  relSel.innerHTML = '<option value="">All relations</option>' + rels.map(r => `<option value="${r}">${r}</option>`).join('');
-  // populate year slider from edge sentences (extract 19xx/20xx)
+  // doc filter
+  const docs = [...new Set(allNodes.flatMap(n => n.sources||[]))].sort();
+  document.getElementById('docFilter').innerHTML = '<option value="">All documents</option>' + docs.map(d=>`<option value="${d}">${d}</option>`).join('');
+  // rel filter
+  const rels = [...new Set(allEdges.map(e=>e.relation))].sort();
+  document.getElementById('relFilter').innerHTML = '<option value="">All relations</option>' + rels.map(r=>`<option value="${r}">${r}</option>`).join('');
+  // year slider
   const years = new Set();
-  for (const e of edges) {
-    const m = (e.sentence||'').match(/\b(19\d{2}|20\d{2})\b/);
-    if (m) years.add(+m[1]);
-  }
-  const yArr = [...years].sort((a,b)=>a-b);
-  const ys = document.getElementById('yearSlider');
-  if (yArr.length > 1) { ys.min = yArr[0]; ys.max = yArr[yArr.length-1]; ys.value = yArr[yArr.length-1]; document.getElementById('yearVal').textContent = 'All'; }
-  else { ys.min = 0; ys.max = 0; ys.value = 0; }
-  // cap large graphs
-  if (nodes.length > 300) { nodes = nodes.slice(0, 300); edges = edges.filter(e => nodes.some(n=>n.id===e.source) && nodes.some(n=>n.id===e.target)); }
-  tx = W/2; ty = H/2; scale = Math.min(W, H) / 600;
+  for (const e of allEdges) { const m=(e.sentence||'').match(/\b(19\d{2}|20\d{2})\b/); if (m) years.add(+m[1]); }
+  const yArr=[...years].sort((a,b)=>a-b);
+  const ys=document.getElementById('yearSlider');
+  if (yArr.length>1){ ys.min=yArr[0]; ys.max=yArr[yArr.length-1]; ys.value=yArr[yArr.length-1]; document.getElementById('yearVal').textContent='All'; }
+  else { ys.min=0; ys.max=0; ys.value=0; }
+  applyFilters();
 }
 
-function renderStats() {
-  document.getElementById('stats').innerHTML =
-    `<span><b>${stats.nodes||0}</b> entities</span>` +
-    `<span><b>${stats.edges||0}</b> relationships</span>` +
-    `<span>density <b>${stats.density||0}</b></span>` +
-    `<span>NER <b>${stats.ner_backend||'heuristic'}</b></span>` +
-    `<span>avg degree <b>${stats.avg_degree||0}</b></span>`;
-}
-
-// ── physics ────────────────────────────────────────────────────────
-function step() {
-  const k = 0.04, rep = 6000, attr = 0.02;
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i+1; j < nodes.length; j++) {
-      const a = nodes[i], b = nodes[j];
-      let dx = b.x-a.x, dy = b.y-a.y;
-      let d2 = dx*dx + dy*dy + 1;
-      let d = Math.sqrt(d2);
-      let f = rep / d2;
-      dx/=d; dy/=d;
-      a.vx -= dx*f; a.vy -= dy*f; b.vx += dx*f; b.vy += dy*f;
-    }
-  }
-  for (const e of edges) {
-    const a = nodes.find(n=>n.id===e.source), b = nodes.find(n=>n.id===e.target);
-    if (!a || !b) continue;
-    let dx = b.x-a.x, dy = b.y-a.y;
-    let d = Math.sqrt(dx*dx+dy*dy) || 1;
-    let f = (d-120)*attr;
-    dx/=d; dy/=d;
-    a.vx += dx*f; a.vy += dy*f; b.vx -= dx*f; b.vy -= dy*f;
-  }
-  for (const n of nodes) {
-    n.vx *= 0.85; n.vy *= 0.85;
-    n.x += n.vx; n.y += n.vy;
-    // keep in bounds
-    n.x = Math.max(-W*0.5, Math.min(W*1.5, n.x));
-    n.y = Math.max(-H*0.5, Math.min(H*1.5, n.y));
-  }
-}
-
-// ── draw ───────────────────────────────────────────────────────────
 function edgeVisible(e) {
-  const conf = +document.getElementById('confSlider').value;
-  const rel = document.getElementById('relFilter').value;
-  const ys = document.getElementById('yearSlider');
-  const year = +ys.value;
+  const conf=+document.getElementById('confSlider').value;
+  const rel=document.getElementById('relFilter').value;
+  const doc=document.getElementById('docFilter').value;
+  const ys=document.getElementById('yearSlider'); const year=+ys.value;
   if (e.confidence < conf) return false;
-  if (rel && e.relation !== rel) return false;
-  if (year > 0) {
-    const m = (e.sentence||'').match(/\b(19\d{2}|20\d{2})\b/);
-    if (!m || +m[1] > year) return false;
-  }
+  if (rel && e.relation!==rel) return false;
+  if (doc && !(e.filename||'').includes(doc) && !(e.sources||[]).includes(doc)) return false;
+  if (year>0){ const m=(e.sentence||'').match(/\b(19\d{2}|20\d{2})\b/); if(!m||+m[1]>year) return false; }
   return true;
 }
 
-function draw() {
-  ctx.clearRect(0, 0, W, H);
-  ctx.save();
-  ctx.translate(tx, ty); ctx.scale(scale, scale);
-
-  const selSet = selected ? new Set([selected, ...edges.filter(e=>e.source===selected||e.target===selected).flatMap(e=>[e.source,e.target])]) : null;
-
-  // edges
-  for (const e of edges) {
-    if (!edgeVisible(e)) continue;
-    const a = nodes.find(n=>n.id===e.source), b = nodes.find(n=>n.id===e.target);
-    if (!a || !b) continue;
-    const active = !selSet || (selSet.has(e.source) && selSet.has(e.target));
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-    ctx.strokeStyle = active ? (selected && (e.source===selected||e.target===selected) ? '#ff9900' : 'rgba(140,140,140,0.5)') : 'rgba(60,60,60,0.25)';
-    ctx.lineWidth = active ? (0.8 + (e.weight||1)*0.4) : 0.5;
-    ctx.stroke();
-    // arrow
-    const dx = b.x-a.x, dy = b.y-a.y, d = Math.sqrt(dx*dx+dy*dy)||1;
-    const ax = b.x - dx/d*b.r, ay = b.y - dy/d*b.r;
-    ctx.beginPath(); ctx.moveTo(ax, ay);
-    ctx.lineTo(ax - dx/d*8 + dy/d*5, ay - dy/d*8 - dx/d*5);
-    ctx.lineTo(ax - dx/d*8 - dy/d*5, ay - dy/d*8 + dx/d*5);
-    ctx.closePath(); ctx.fillStyle = active ? '#ff9900' : 'rgba(140,140,140,0.4)'; ctx.fill();
-    // relation label on hover
-    if (hovered === e.source || hovered === e.target) {
-      const mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
-      ctx.font = '10px sans-serif'; ctx.fillStyle = '#8a8a8a'; ctx.textAlign = 'center';
-      ctx.fillText(e.relation, mx, my-4);
-    }
+function applyFilters() {
+  const typeF=document.getElementById('typeFilter').value;
+  const docF=document.getElementById('docFilter').value;
+  const visibleNodes = allNodes.filter(n => (!typeF || n.type===typeF) && (!docF || (n.sources||[]).includes(docF)));
+  const visibleIds = new Set(visibleNodes.map(n=>n.id));
+  const visibleEdges = allEdges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target) && edgeVisible(e));
+  // build graphology graph
+  graph = new graphology.Graph();
+  for (const n of visibleNodes) {
+    graph.addNode(n.id, { label: n.label, size: Math.min(18, 4+Math.sqrt(n.mentions||1)*2), color: typeColor(n.type), x: Math.random(), y: Math.random() });
   }
-
-  // nodes
-  for (const n of nodes) {
-    const dim = selSet && !selSet.has(n.id);
-    const isSel = selected === n.id;
-    const isHov = hovered === n.id;
-    ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2);
-    ctx.fillStyle = dim ? 'rgba(60,60,60,0.4)' : typeColor(n.type);
-    ctx.globalAlpha = dim ? 0.3 : 1;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    if (isSel || isHov) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
-    ctx.font = `${Math.max(9, n.r*0.45)}px sans-serif`;
-    ctx.fillStyle = dim ? '#555' : '#000';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const label = n.label.length > 14 ? n.label.slice(0, 13)+'…' : n.label;
-    ctx.fillText(label, n.x, n.y);
+  for (const e of visibleEdges) {
+    if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
+    graph.addEdge(e.source, e.target, { relation: e.relation, confidence: e.confidence, sentence: e.sentence, filename: e.filename, page: e.page, size: Math.min(4, 1+(e.weight||1)*0.5), color: '#888' });
   }
-  ctx.restore();
+  renderSigma();
 }
 
-// ── interaction ────────────────────────────────────────────────────
-function toWorld(px, py) { return { x: (px-tx)/scale, y: (py-ty)/scale }; }
-function nodeAt(px, py) {
-  const w = toWorld(px, py);
-  for (let i = nodes.length-1; i >= 0; i--) {
-    const n = nodes[i];
-    if ((w.x-n.x)**2 + (w.y-n.y)**2 < n.r*n.r) return n;
-  }
-  return null;
+function renderSigma() {
+  if (sigma) sigma.kill();
+  const SigmaCtor = Sigma.Sigma || Sigma;
+  sigma = new SigmaCtor(graph, container, { renderer: 'webgl', minEdgeRatio: 0.1, defaultNodeType: 'circle', defaultEdgeType: 'line' });
+  // force layout (graphology-layout-force, bundled UMD)
+  try {
+    const fa = new graphologyLibrary.layout.Force(graph, { maxIterations: 100, gravity: 1, scalingRatio: 2 });
+    fa.run();
+  } catch (e) { /* layout optional — sigma has default positions */ }
+  sigma.refresh();
+  // click node
+  sigma.on('clickNode', e => selectNode(e.node));
+  sigma.on('clickStage', () => { selected=null; document.getElementById('panel').style.display='none'; });
+  // right-click edge to delete
+  sigma.on('rightClickEdge', e => deleteEdge(e.edge));
+  sigma.refresh();
 }
-
-canvas.addEventListener('mousedown', e => {
-  const n = nodeAt(e.offsetX, e.offsetY);
-  if (n) { dragging = n; offsetX = n.x - toWorld(e.offsetX, e.offsetY).x; offsetY = n.y - toWorld(e.offsetX, e.offsetY).y; canvas.classList.add('dragging'); }
-  else { dragging = 'pan'; canvas.classList.add('dragging'); }
-});
-canvas.addEventListener('mousemove', e => {
-  const w = toWorld(e.offsetX, e.offsetY);
-  if (dragging === 'pan') { tx = e.offsetX - w.x*scale; ty = e.offsetY - w.y*scale; }
-  else if (dragging && dragging !== 'pan') { dragging.x = w.x + offsetX; dragging.y = w.y + offsetY; }
-  hovered = nodeAt(e.offsetX, e.offsetY)?.id || null;
-});
-canvas.addEventListener('mouseup', e => {
-  if (dragging === 'pan') {
-    const n = nodeAt(e.offsetX, e.offsetY);
-    if (n) selectNode(n.id);
-  }
-  dragging = null; canvas.classList.remove('dragging');
-});
-canvas.addEventListener('wheel', e => {
-  e.preventDefault();
-  const factor = e.deltaY > 0 ? 0.9 : 1.1;
-  scale *= factor;
-  scale = Math.max(0.1, Math.min(5, scale));
-}, {passive: false});
 
 function selectNode(id) {
   selected = id;
-  const n = nodes.find(x=>x.id===id);
+  const n = allNodes.find(x=>x.id===id);
   if (!n) return;
-  const panel = document.getElementById('panel');
-  panel.style.display = 'block';
+  const panel=document.getElementById('panel');
+  panel.style.display='block';
   document.getElementById('pTitle').textContent = n.label;
-  const conns = edges.filter(e=>e.source===id||e.target===id);
+  const conns = allEdges.filter(e=>e.source===id||e.target===id);
   let html = `<div class="row">Type: <b>${n.type}</b></div>`;
   html += `<div class="row">Mentions: <b>${n.mentions||1}</b></div>`;
   html += `<div class="row">Confidence: <b>${n.confidence||0.5}</b></div>`;
   if (n.aliases && n.aliases.length) html += `<div class="row">Aliases: ${n.aliases.map(a=>`<span class="tag">${a}</span>`).join('')}</div>`;
   if (n.sources && n.sources.length) html += `<div class="row">Sources: ${n.sources.map(s=>`<span class="tag">${s}</span>`).join('')}</div>`;
   html += `<div class="row" style="margin-top:8px"><b>${conns.length} connections:</b></div>`;
-  for (const c of conns.slice(0, 15)) {
+  for (const c of conns.slice(0, 20)) {
     const other = c.source===id ? c.target : c.source;
-    const on = nodes.find(x=>x.id===other);
+    const on = allNodes.find(x=>x.id===other);
     const dir = c.source===id ? '→' : '←';
-    html += `<div class="row">${on?on.label:other} ${dir} <span style="color:var(--accent)">${c.relation}</span> <span style="color:#666">(p${c.page||'?'})</span></div>`;
-    if (c.sentence) html += `<div style="font-size:11px;color:#666;margin:2px 0 6px 12px;border-left:2px solid var(--border);padding-left:6px">"${c.sentence}"</div>`;
+    html += `<div class="row">${on?on.label:other} ${dir} <span style="color:var(--accent)">${c.relation}</span> <span style="color:#666">(p${c.page||'?'})</span><span class="del" data-src="${c.source}" data-tgt="${c.target}" data-rel="${c.relation}">✕ delete</span></div>`;
+    if (c.sentence) html += `<div class="cite">"${c.sentence}"</div>`;
   }
   document.getElementById('pBody').innerHTML = html;
+  // wire delete buttons
+  document.querySelectorAll('#pBody .del').forEach(el => el.onclick = () => deleteEdgeByPair(el.dataset.src, el.dataset.tgt, el.dataset.rel));
 }
-document.getElementById('panelClose').onclick = () => { document.getElementById('panel').style.display = 'none'; selected = null; };
 
-// ── search + filter ────────────────────────────────────────────────
+function deleteEdgeByPair(src, tgt, rel) {
+  const idx = allEdges.findIndex(e => e.source===src && e.target===tgt && e.relation===rel);
+  if (idx >= 0) { allEdges.splice(idx,1); applyFilters(); toast('edge deleted (session only)'); }
+}
+function deleteEdge(edgeId) {
+  if (!graph) return;
+  const attrs = graph.getEdgeAttributes(edgeId);
+  deleteEdgeByPair(graph.source(edgeId), graph.target(edgeId), attrs.relation);
+}
+
+document.getElementById('panelClose').onclick = () => { document.getElementById('panel').style.display='none'; selected=null; };
+
+// ── search ──────────────────────────────────────────────────────────
 document.getElementById('search').addEventListener('input', e => {
   const q = e.target.value.trim().toLowerCase();
-  if (!q) { selected = null; return; }
-  const hit = nodes.find(n => n.label.toLowerCase().includes(q) || (n.aliases||[]).some(a=>a.toLowerCase().includes(q)));
-  if (hit) selectNode(hit.id);
-});
-document.getElementById('typeFilter').addEventListener('change', e => {
-  const t = e.target.value;
-  if (!t) { nodes.forEach(n=>n.hidden=false); return; }
-  nodes.forEach(n => n.hidden = n.type !== t);
-});
-document.getElementById('relFilter').addEventListener('change', () => selected = null);
-document.getElementById('confSlider').addEventListener('input', e => {
-  document.getElementById('confVal').textContent = (+e.target.value).toFixed(2);
-  selected = null;
-});
-document.getElementById('yearSlider').addEventListener('input', e => {
-  const v = +e.target.value;
-  document.getElementById('yearVal').textContent = v > 0 ? v : 'All';
-  selected = null;
+  if (!q) { selected=null; return; }
+  const hit = allNodes.find(n => n.label.toLowerCase().includes(q) || (n.aliases||[]).some(a=>a.toLowerCase().includes(q)));
+  if (hit) { selectNode(hit.id); if (sigma && graph.hasNode(hit.id)) sigma.getCamera().animatedSet({ x: graph.getNodeAttribute(hit.id,'x'), y: graph.getNodeAttribute(hit.id,'y'), angle:0, ratio:1.5 }, 300); }
 });
 
-// ── actions ────────────────────────────────────────────────────────
-function toast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.style.display = 'block';
-  setTimeout(()=>t.style.display='none', 2500);
-}
+// ── filters ─────────────────────────────────────────────────────────
+['typeFilter','relFilter','docFilter'].forEach(id => document.getElementById(id).addEventListener('change', () => { selected=null; applyFilters(); }));
+document.getElementById('confSlider').addEventListener('input', e => { document.getElementById('confVal').textContent=(+e.target.value).toFixed(2); applyFilters(); });
+document.getElementById('yearSlider').addEventListener('input', e => { const v=+e.target.value; document.getElementById('yearVal').textContent = v>0?v:'All'; applyFilters(); });
+
+// ── actions ─────────────────────────────────────────────────────────
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',3000); }
+function renderStats(){ document.getElementById('stats').innerHTML =
+  `<span><b>${stats.nodes||0}</b> entities</span><span><b>${stats.edges||0}</b> relationships</span><span>density <b>${stats.density||0}</b></span><span>NER <b>${stats.ner_backend||'heuristic'}</b></span><span>avg degree <b>${stats.avg_degree||0}</b></span>`; }
+
 document.getElementById('btnRebuild').onclick = async () => {
   toast('rebuilding…');
   const r = await fetch('/api/rebuild', {method:'POST'});
   const d = await r.json();
-  loadGraph(await (await fetch('/api/graph')).json());
+  const g = await (await fetch('/api/graph')).json();
+  loadGraph(g);
   toast(`rebuilt: ${d.stats.nodes} entities, ${d.stats.edges} relationships`);
 };
-document.getElementById('btnExport').onclick = () => window.open('/api/export?format=json', '_blank');
+document.getElementById('btnExport').onclick = () => window.open('/api/export?format=json','_blank');
+document.getElementById('btnEvidence').onclick = () => window.open('/api/export?format=evidence','_blank');
 document.getElementById('btnUpload').onclick = async () => {
-  const input = document.getElementById('fileInput');
-  if (!input.files.length) { toast('pick PDFs first'); return; }
-  const fd = new FormData();
+  const input=document.getElementById('fileInput');
+  if (!input.files.length){ toast('pick PDFs first'); return; }
+  const fd=new FormData();
   for (const f of input.files) fd.append('files', f);
   toast('uploading + rebuilding…');
   const r = await fetch('/api/upload', {method:'POST', body: fd});
   const d = await r.json();
-  loadGraph(await (await fetch('/api/graph')).json());
-  toast(`added ${d.saved.length} PDFs → ${d.stats.nodes} entities`);
-  input.value = '';
+  const g = await (await fetch('/api/graph')).json();
+  loadGraph(g);
+  const errs = d.errors && d.errors.length ? ` | rejected: ${d.errors.map(x=>x.file).join(', ')}` : '';
+  toast(`added ${d.saved.length} PDFs → ${d.stats.nodes} entities${errs}`);
+  input.value='';
 };
 
-// ── loop ───────────────────────────────────────────────────────────
-function loop() {
-  step();
-  draw();
-  requestAnimationFrame(loop);
+// ── deep links (#node=elonmusk&year=2022) ──────────────────────────
+function readHash(){
+  const h = new URLSearchParams(location.hash.slice(1));
+  const node = h.get('node');
+  if (node) { const n = allNodes.find(x=>x.id===node || x.label.toLowerCase()===node.toLowerCase()); if (n) setTimeout(()=>selectNode(n.id), 500); }
+  const year = h.get('year');
+  if (year && document.getElementById('yearSlider').max > 0) { document.getElementById('yearSlider').value = year; document.getElementById('yearVal').textContent = year; }
 }
+window.addEventListener('hashchange', readHash);
+
+// ── boot ────────────────────────────────────────────────────────────
 (async () => {
   try {
     const data = await (await fetch('/api/graph')).json();
     loadGraph(data);
-  } catch (err) {
-    toast('failed to load graph: ' + err.message);
-  }
-  loop();
+    readHash();
+  } catch (err) { toast('failed to load graph: ' + err.message); }
 })();
 </script>
 </body>
