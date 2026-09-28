@@ -3,6 +3,9 @@ __pycache__/
 .pytest_cache/
 docs/*.pdf
 !docs/sample_company.pdf
+!docs/sample_tech.pdf
+!docs/sample_acquisitions.pdf
+cache/
 exports/
 graph.json
 graph.graphml
