@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Knowledge Graph — PDF Explorer</title>
+<style>
+  :root {
+    --bg: #000000; --panel: #0a0a0a; --panel2: #0f0f0f;
+    --accent: #ff9900; --text: #d9d9d9; --dim: #8a8a8a; --border: #262626;
+    --person: #ff9900; --org: #4fc3f7; --gpe: #81c784; --other: #b0bec5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header .logo { font-size: 18px; font-weight: 700; color: var(--accent); }
+  header .sub { font-size: 12px; color: var(--dim); }
+  header .spacer { flex: 1; }
+  .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.1); }
+  input[type=text] { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 13px; width: 220px; }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font-size: 13px; }
+  .stats { display: flex; gap: 18px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel2); font-size: 12px; color: var(--dim); }
+  .stats b { color: var(--accent); }
+  main { flex: 1; position: relative; }
+  #canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  #canvas.dragging { cursor: grabbing; }
+  /* side panel */
+  #panel { position: absolute; top: 12px; right: 12px; width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px; display: none; max-height: calc(100% - 24px); overflow-y: auto; }
+  #panel h3 { color: var(--accent); font-size: 15px; margin-bottom: 8px; }
+  #panel .row { font-size: 12px; color: var(--dim); margin-bottom: 4px; }
+  #panel .row b { color: var(--text); }
+  #panel .tag { display: inline-block; background: var(--panel2); border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font-size: 11px; margin: 2px; color: var(--text); }
+  #panel .close { float: right; cursor: pointer; color: var(--dim); font-size: 16px; }
+  #panel .close:hover { color: var(--text); }
+  /* legend + upload */
+  #legend { position: absolute; bottom: 12px; left: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; display: flex; gap: 14px; }
+  #legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  #upload { position: absolute; bottom: 12px; right: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+  #upload input[type=file] { display: none; }
+  #upload label { cursor: pointer; color: var(--accent); }
+  #toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--accent); color: var(--text); padding: 8px 16px; border-radius: 4px; font-size: 13px; display: none; }
+  #hint { position: absolute; top: 12px; left: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 11px; color: var(--dim); }
+  .edge-label { font-size: 10px; fill: var(--dim); pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">⚡ Knowledge Graph</span>
+  <span class="sub">PDF → entities → relationships</span>
+  <span class="spacer"></span>
+  <input type="text" id="search" placeholder="Search entities… (e.g. Musk)" />
+  <select id="typeFilter"><option value="">All types</option><option value="PERSON">People</option><option value="ORG">Organizations</option><option value="GPE">Places</option><option value="OTHER">Other</option></select>
+  <button class="btn" id="btnExport">Export JSON</button>
+  <button class="btn" id="btnRebuild">Rebuild</button>
+</header>
+<div class="stats" id="stats"></div>
+<main>
+  <canvas id="canvas"></canvas>
+  <div id="hint">drag to pan · scroll to zoom · click a node</div>
+  <div id="legend">
+    <span><span class="dot" style="background:var(--person)"></span>People</span>
+    <span><span class="dot" style="background:var(--org)"></span>Organizations</span>
+    <span><span class="dot" style="background:var(--gpe)"></span>Places</span>
+  </div>
+  <div id="upload">
+    <label for="fileInput">📄 Upload PDFs</label>
+    <input type="file" id="fileInput" multiple accept=".pdf" />
+    <button class="btn" id="btnUpload">Go</button>
+  </div>
+  <div id="panel">
+    <span class="close" id="panelClose">✕</span>
+    <h3 id="pTitle"></h3>
+    <div id="pBody"></div>
+  </div>
+  <div id="toast"></div>
+</main>
+
+<script>
+// ── force-directed graph on canvas ────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let nodes = [], edges = [], stats = {};
+let W = 0, H = 0;
+let selected = null, hovered = null;
+let dragging = null, offsetX = 0, offsetY = 0;
+let scale = 1, tx = 0, ty = 0;
+
+function resize() {
+  W = canvas.width = canvas.parentElement.clientWidth;
+  H = canvas.height = canvas.parentElement.clientHeight;
+}
+window.addEventListener('resize', resize); resize();
+
+function typeColor(t) {
+  return {PERSON:'#ff9900', ORG:'#4fc3f7', GPE:'#81c784', PRODUCT:'#f48fb1'}[t] || '#b0bec5';
+}
+
+function loadGraph(data) {
+  nodes = data.nodes.map(n => ({
+    ...n, x: (Math.random()-0.5)*W*0.5, y: (Math.random()-0.5)*H*0.5,
+    vx: 0, vy: 0, r: Math.min(28, 8 + Math.sqrt(n.mentions||1)*4)
+  }));
+  edges = data.edges;
+  stats = data.stats;
+  renderStats();
+  // center
+  tx = W/2; ty = H/2; scale = Math.min(W, H) / 600;
+}
+
+function renderStats() {
+  document.getElementById('stats').innerHTML =
+    `<span><b>${stats.nodes||0}</b> entities</span>` +
+    `<span><b>${stats.edges||0}</b> relationships</span>` +
+    `<span>density <b>${stats.density||0}</b></span>` +
+    `<span>NER <b>${stats.ner_backend||'heuristic'}</b></span>` +
+    `<span>avg degree <b>${stats.avg_degree||0}</b></span>`;
+}
+
+// ── physics ────────────────────────────────────────────────────────
+function step() {
+  const k = 0.04, rep = 6000, attr = 0.02;
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i+1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = b.x-a.x, dy = b.y-a.y;
+      let d2 = dx*dx + dy*dy + 1;
+      let d = Math.sqrt(d2);
+      let f = rep / d2;
+      dx/=d; dy/=d;
+      a.vx -= dx*f; a.vy -= dy*f; b.vx += dx*f; b.vy += dy*f;
+    }
+  }
+  for (const e of edges) {
+    const a = nodes.find(n=>n.id===e.source), b = nodes.find(n=>n.id===e.target);
+    if (!a || !b) continue;
+    let dx = b.x-a.x, dy = b.y-a.y;
+    let d = Math.sqrt(dx*dx+dy*dy) || 1;
+    let f = (d-120)*attr;
+    dx/=d; dy/=d;
+    a.vx += dx*f; a.vy += dy*f; b.vx -= dx*f; b.vy -= dy*f;
+  }
+  for (const n of nodes) {
+    n.vx *= 0.85; n.vy *= 0.85;
+    n.x += n.vx; n.y += n.vy;
+    // keep in bounds
+    n.x = Math.max(-W*0.5, Math.min(W*1.5, n.x));
+    n.y = Math.max(-H*0.5, Math.min(H*1.5, n.y));
+  }
+}
+
+// ── draw ───────────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(tx, ty); ctx.scale(scale, scale);
+
+  const selSet = selected ? new Set([selected, ...edges.filter(e=>e.source===selected||e.target===selected).flatMap(e=>[e.source,e.target])]) : null;
+
+  // edges
+  for (const e of edges) {
+    const a = nodes.find(n=>n.id===e.source), b = nodes.find(n=>n.id===e.target);
+    if (!a || !b) continue;
+    const active = !selSet || (selSet.has(e.source) && selSet.has(e.target));
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = active ? (selected && (e.source===selected||e.target===selected) ? '#ff9900' : 'rgba(140,140,140,0.5)') : 'rgba(60,60,60,0.25)';
+    ctx.lineWidth = active ? (0.8 + (e.weight||1)*0.4) : 0.5;
+    ctx.stroke();
+    // arrow
+    const dx = b.x-a.x, dy = b.y-a.y, d = Math.sqrt(dx*dx+dy*dy)||1;
+    const ax = b.x - dx/d*b.r, ay = b.y - dy/d*b.r;
+    ctx.beginPath(); ctx.moveTo(ax, ay);
+    ctx.lineTo(ax - dx/d*8 + dy/d*5, ay - dy/d*8 - dx/d*5);
+    ctx.lineTo(ax - dx/d*8 - dy/d*5, ay - dy/d*8 + dx/d*5);
+    ctx.closePath(); ctx.fillStyle = active ? '#ff9900' : 'rgba(140,140,140,0.4)'; ctx.fill();
+    // relation label on hover
+    if (hovered === e.source || hovered === e.target) {
+      const mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
+      ctx.font = '10px sans-serif'; ctx.fillStyle = '#8a8a8a'; ctx.textAlign = 'center';
+      ctx.fillText(e.relation, mx, my-4);
+    }
+  }
+
+  // nodes
+  for (const n of nodes) {
+    const dim = selSet && !selSet.has(n.id);
+    const isSel = selected === n.id;
+    const isHov = hovered === n.id;
+    ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2);
+    ctx.fillStyle = dim ? 'rgba(60,60,60,0.4)' : typeColor(n.type);
+    ctx.globalAlpha = dim ? 0.3 : 1;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    if (isSel || isHov) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.font = `${Math.max(9, n.r*0.45)}px sans-serif`;
+    ctx.fillStyle = dim ? '#555' : '#000';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const label = n.label.length > 14 ? n.label.slice(0, 13)+'…' : n.label;
+    ctx.fillText(label, n.x, n.y);
+  }
+  ctx.restore();
+}
+
+// ── interaction ────────────────────────────────────────────────────
+function toWorld(px, py) { return { x: (px-tx)/scale, y: (py-ty)/scale }; }
+function nodeAt(px, py) {
+  const w = toWorld(px, py);
+  for (let i = nodes.length-1; i >= 0; i--) {
+    const n = nodes[i];
+    if ((w.x-n.x)**2 + (w.y-n.y)**2 < n.r*n.r) return n;
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const n = nodeAt(e.offsetX, e.offsetY);
+  if (n) { dragging = n; offsetX = n.x - toWorld(e.offsetX, e.offsetY).x; offsetY = n.y - toWorld(e.offsetX, e.offsetY).y; canvas.classList.add('dragging'); }
+  else { dragging = 'pan'; canvas.classList.add('dragging'); }
+});
+canvas.addEventListener('mousemove', e => {
+  const w = toWorld(e.offsetX, e.offsetY);
+  if (dragging === 'pan') { tx = e.offsetX - w.x*scale; ty = e.offsetY - w.y*scale; }
+  else if (dragging && dragging !== 'pan') { dragging.x = w.x + offsetX; dragging.y = w.y + offsetY; }
+  hovered = nodeAt(e.offsetX, e.offsetY)?.id || null;
+});
+canvas.addEventListener('mouseup', e => {
+  if (dragging === 'pan') {
+    const n = nodeAt(e.offsetX, e.offsetY);
+    if (n) selectNode(n.id);
+  }
+  dragging = null; canvas.classList.remove('dragging');
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  scale *= factor;
+  scale = Math.max(0.1, Math.min(5, scale));
+}, {passive: false});
+
+function selectNode(id) {
+  selected = id;
+  const n = nodes.find(x=>x.id===id);
+  if (!n) return;
+  const panel = document.getElementById('panel');
+  panel.style.display = 'block';
+  document.getElementById('pTitle').textContent = n.label;
+  const conns = edges.filter(e=>e.source===id||e.target===id);
+  let html = `<div class="row">Type: <b>${n.type}</b></div>`;
+  html += `<div class="row">Mentions: <b>${n.mentions||1}</b></div>`;
+  html += `<div class="row">Confidence: <b>${n.confidence||0.5}</b></div>`;
+  if (n.aliases && n.aliases.length) html += `<div class="row">Aliases: ${n.aliases.map(a=>`<span class="tag">${a}</span>`).join('')}</div>`;
+  if (n.sources && n.sources.length) html += `<div class="row">Sources: ${n.sources.map(s=>`<span class="tag">${s}</span>`).join('')}</div>`;
+  html += `<div class="row" style="margin-top:8px"><b>${conns.length} connections:</b></div>`;
+  for (const c of conns.slice(0, 15)) {
+    const other = c.source===id ? c.target : c.source;
+    const on = nodes.find(x=>x.id===other);
+    const dir = c.source===id ? '→' : '←';
+    html += `<div class="row">${on?on.label:other} ${dir} <span style="color:var(--accent)">${c.relation}</span></div>`;
+  }
+  document.getElementById('pBody').innerHTML = html;
+}
+document.getElementById('panelClose').onclick = () => { document.getElementById('panel').style.display = 'none'; selected = null; };
+
+// ── search + filter ────────────────────────────────────────────────
+document.getElementById('search').addEventListener('input', e => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) { selected = null; return; }
+  const hit = nodes.find(n => n.label.toLowerCase().includes(q) || (n.aliases||[]).some(a=>a.toLowerCase().includes(q)));
+  if (hit) selectNode(hit.id);
+});
+document.getElementById('typeFilter').addEventListener('change', e => {
+  const t = e.target.value;
+  if (!t) { nodes.forEach(n=>n.hidden=false); return; }
+  nodes.forEach(n => n.hidden = n.type !== t);
+});
+
+// ── actions ────────────────────────────────────────────────────────
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(()=>t.style.display='none', 2500);
+}
+document.getElementById('btnRebuild').onclick = async () => {
+  toast('rebuilding…');
+  const r = await fetch('/api/rebuild', {method:'POST'});
+  const d = await r.json();
+  loadGraph(await (await fetch('/api/graph')).json());
+  toast(`rebuilt: ${d.stats.nodes} entities, ${d.stats.edges} relationships`);
+};
+document.getElementById('btnExport').onclick = () => window.open('/api/export?format=json', '_blank');
+document.getElementById('btnUpload').onclick = async () => {
+  const input = document.getElementById('fileInput');
+  if (!input.files.length) { toast('pick PDFs first'); return; }
+  const fd = new FormData();
+  for (const f of input.files) fd.append('files', f);
+  toast('uploading + rebuilding…');
+  const r = await fetch('/api/upload', {method:'POST', body: fd});
+  const d = await r.json();
+  loadGraph(await (await fetch('/api/graph')).json());
+  toast(`added ${d.saved.length} PDFs → ${d.stats.nodes} entities`);
+  input.value = '';
+};
+
+// ── loop ───────────────────────────────────────────────────────────
+function loop() {
+  step();
+  draw();
+  requestAnimationFrame(loop);
+}
+(async () => {
+  try {
+    const data = await (await fetch('/api/graph')).json();
+    loadGraph(data);
+  } catch (err) {
+    toast('failed to load graph: ' + err.message);
+  }
+  loop();
+})();
+</script>
+</body>
+</html>

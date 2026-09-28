@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+docs/*.pdf
+!docs/sample_company.pdf
+exports/
+graph.json
+graph.graphml
+graph.png
+.venv/
+venv/
